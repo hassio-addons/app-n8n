@@ -1,0 +1,10 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Home Assistant Community App: n8n
+# Runs n8n
+# ==============================================================================
+
+bashio::log.info "Starting n8n..."
+
+exec /opt/node_modules/.bin/n8n start

@@ -1,0 +1,132 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Home Assistant Community App: n8n
+# Puts the Home Assistant, MQTT and MariaDB credentials into n8n
+# ==============================================================================
+declare -a credentials
+declare host
+declare password
+declare port
+declare protocol
+declare seed
+declare ssl
+declare username
+
+# The credentials below are written into n8n's database with its own import
+# command, encrypted with the instance key like any other. They carry fixed
+# ids, so a later import updates them in place rather than adding another.
+#
+# Importing means starting up most of n8n, which is slow, so it only happens
+# when what would be imported differs from what was imported last time.
+
+# Home Assistant. The node in n8n wants a host, a port and a long-lived
+# access token; it gets a server NGINX runs on the loopback interface, which
+# forwards to Home Assistant by way of the Supervisor and supplies the
+# authentication itself. The token in the credential is never looked at.
+if bashio::config.true 'home_assistant_credential'; then
+    credentials+=("$(bashio::var.json \
+        id "HomeAssistantApp" \
+        name "Home Assistant" \
+        type "homeAssistantApi" \
+        data "^$(bashio::var.json \
+            host "127.0.0.1" \
+            port "^48123" \
+            ssl "^false" \
+            accessToken "managed-by-home-assistant")")")
+fi
+
+# MQTT, when a broker on this Home Assistant installation announces itself
+# through the Supervisor, as the Mosquitto broker app does.
+if bashio::config.true 'mqtt_credential'; then
+    if bashio::services.available "mqtt"; then
+        host=$(bashio::services "mqtt" "host")
+        password=$(bashio::services "mqtt" "password")
+        port=$(bashio::services "mqtt" "port")
+        ssl=$(bashio::services "mqtt" "ssl")
+        username=$(bashio::services "mqtt" "username")
+
+        protocol="mqtt"
+        if bashio::var.true "${ssl}"; then
+            protocol="mqtts"
+        fi
+
+        credentials+=("$(bashio::var.json \
+            id "HomeAssistantMqtt" \
+            name "MQTT (Home Assistant)" \
+            type "mqtt" \
+            data "^$(bashio::var.json \
+                protocol "${protocol}" \
+                host "${host}" \
+                port "^${port}" \
+                username "${username}" \
+                password "${password}" \
+                clean "^true" \
+                clientId "" \
+                ssl "^${ssl}" \
+                passwordless "^false" \
+                ca "" \
+                cert "" \
+                key "" \
+                rejectUnauthorized "^false")")")
+    else
+        bashio::log.info \
+            "No MQTT broker is announced on this system, so no MQTT" \
+            "credential is made. Install the Mosquitto broker app to get one."
+    fi
+fi
+
+# MariaDB, when the MariaDB app announces itself. The credential opens the
+# `mysql` schema, which the login is sure to be able to see; a query names
+# the schema it wants, as in `homeassistant.states`.
+if bashio::config.true 'mariadb_credential'; then
+    if bashio::services.available "mysql"; then
+        host=$(bashio::services "mysql" "host")
+        password=$(bashio::services "mysql" "password")
+        port=$(bashio::services "mysql" "port")
+        username=$(bashio::services "mysql" "username")
+
+        credentials+=("$(bashio::var.json \
+            id "HomeAssistantMariaDb" \
+            name "MariaDB (Home Assistant)" \
+            type "mySql" \
+            data "^$(bashio::var.json \
+                host "${host}" \
+                database "mysql" \
+                user "${username}" \
+                password "${password}" \
+                port "^${port}" \
+                connectTimeout "^10000" \
+                ssl "^false" \
+                caCertificate "" \
+                clientPrivateKey "" \
+                clientCertificate "")")")
+    else
+        bashio::log.info \
+            "No MariaDB server is announced on this system, so no MariaDB" \
+            "credential is made. Install the MariaDB app to get one."
+    fi
+fi
+
+if [[ ${#credentials[@]} -eq 0 ]]; then
+    exit 0
+fi
+
+seed=$(printf '%s\n' "${credentials[@]}" | jq -s '.')
+
+# Nothing to do when this exact set went in before.
+if bashio::fs.file_exists /data/.credentials-seed \
+    && [[ "$(</data/.credentials-seed)" == "$(sha256sum <<< "${seed}")" ]]; then
+    exit 0
+fi
+
+bashio::log.info "Putting the Home Assistant credentials into n8n..."
+
+printf '%s' "${seed}" > /tmp/credentials.json
+if ! /opt/node_modules/.bin/n8n import:credentials --input=/tmp/credentials.json; then
+    rm -f /tmp/credentials.json
+    bashio::exit.nok "Failed putting the credentials into n8n"
+fi
+rm -f /tmp/credentials.json
+
+sha256sum <<< "${seed}" > /data/.credentials-seed

@@ -1,0 +1,151 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Home Assistant Community App: n8n
+# Prepares the data directory and the environment n8n runs in
+# ==============================================================================
+declare hostname
+declare log_level
+declare max_old_space_size
+declare name
+declare value
+declare var
+declare port
+declare scheme
+declare webhook_url
+
+# n8n keeps everything of its own below here: the SQLite database with the
+# workflows, credentials and executions, the encryption key those credentials
+# are locked with, binary data, and any community nodes installed from the
+# editor. The editor files it compiles on every start land in .cache, which
+# is why that one is left out of backups.
+mkdir -p /data/.n8n /data/.cache
+
+# The Read/Write Files node may only reach into these. The app's own data is
+# blocked on top of that by n8n itself.
+mkdir -p /config
+
+# Anything from the env_vars option goes in first, so that the settings this
+# app depends on, written below, win when the two disagree.
+for var in $(bashio::config 'env_vars|keys'); do
+    name=$(bashio::config "env_vars[${var}].name")
+    value=$(bashio::config "env_vars[${var}].value")
+    bashio::log.info "Setting ${name} to ${value}"
+    printf "%s" "${value}" > "/var/run/s6/container_environment/${name}"
+done
+
+# n8n listens on the loopback interface only; NGINX is what faces Ingress and
+# the network. The port is an unusual one so that it cannot collide with
+# anything else on a host network.
+printf "%s" "/data" > /var/run/s6/container_environment/N8N_USER_FOLDER
+printf "%s" "127.0.0.1" > /var/run/s6/container_environment/N8N_LISTEN_ADDRESS
+printf "%s" "45678" > /var/run/s6/container_environment/N8N_PORT
+
+# The editor builds every URL it uses from N8N_PATH, and Ingress hands this
+# app out from a path inside Home Assistant that is fixed for as long as the
+# app is installed. Ingress strips it off again before a request arrives, so
+# n8n itself keeps serving from its root.
+printf "%s/" "$(bashio::app.ingress_entry)" \
+    > /var/run/s6/container_environment/N8N_PATH
+
+# NGINX sits in front of n8n and passes along who is really asking. The
+# session cookie is not marked secure: Home Assistant is often reached over
+# plain HTTP on the local network, and a secure cookie would never be stored
+# there, leaving the login screen going round in circles.
+printf "%s" "1" > /var/run/s6/container_environment/N8N_PROXY_HOPS
+printf "%s" "false" > /var/run/s6/container_environment/N8N_SECURE_COOKIE
+
+# Where webhooks, forms and OAuth callbacks are told they live. Anything from
+# outside has to come in over the published port, since an Ingress path is
+# only good for a browser holding a Home Assistant session. Without the port
+# n8n shows an Ingress address, which at least makes clear why the webhook
+# cannot be reached.
+#
+# Home Assistant itself needs neither: it shares the internal network with
+# this app and reaches it by the app's hostname, on a port that is always
+# plain HTTP.
+webhook_url=""
+hostname=$(bashio::app.hostname)
+port=$(bashio::app.port 80)
+if bashio::config.has_value 'webhook_url'; then
+    webhook_url=$(bashio::config 'webhook_url')
+elif bashio::var.has_value "${port}"; then
+    scheme="http"
+    if bashio::config.true 'ssl'; then
+        scheme="https"
+    fi
+    webhook_url="${scheme}://$(bashio::info.hostname).local:${port}/"
+fi
+if bashio::var.has_value "${webhook_url}"; then
+    webhook_url="${webhook_url%/}/"
+    printf "%s" "${webhook_url}" \
+        > /var/run/s6/container_environment/N8N_WEBHOOK_URL
+    bashio::log.info "Webhooks are handed out below ${webhook_url}"
+else
+    bashio::log.notice
+    bashio::log.notice "No port is published for this app, so webhooks can"
+    bashio::log.notice "only be reached from Home Assistant itself, or from"
+    bashio::log.notice "a browser signed in to it. Publish the port in the"
+    bashio::log.notice "Network section of the app configuration to use"
+    bashio::log.notice "webhooks from elsewhere."
+    bashio::log.notice
+fi
+bashio::log.info \
+    "Home Assistant reaches webhooks over the internal network at" \
+    "http://${hostname}:5678/webhook/..."
+
+# Files that workflows read and write stay within the directories mapped
+# into this app. Its own data lives in /data, which n8n blocks on its own.
+printf "%s" "/config;/share;/media" \
+    > /var/run/s6/container_environment/N8N_RESTRICT_FILE_ACCESS_TO
+
+# Updates come through the Home Assistant app store, and nothing about this
+# installation needs to be reported home or filled in on first start.
+printf "%s" "false" > /var/run/s6/container_environment/N8N_DIAGNOSTICS_ENABLED
+printf "%s" "false" > /var/run/s6/container_environment/N8N_HIRING_BANNER_ENABLED
+printf "%s" "false" > /var/run/s6/container_environment/N8N_PERSONALIZATION_ENABLED
+printf "%s" "false" > /var/run/s6/container_environment/N8N_VERSION_NOTIFICATIONS_ENABLED
+
+# Community nodes live in /data, but their node_modules are left out of
+# backups; n8n puts them back from the list it keeps in its database. Nodes
+# that n8n has not verified stay installable, as they are today: the default
+# is announced to flip, and a flip would take nodes away from workflows.
+printf "%s" "true" > /var/run/s6/container_environment/N8N_REINSTALL_MISSING_PACKAGES
+printf "%s" "true" > /var/run/s6/container_environment/N8N_UNVERIFIED_PACKAGES_ENABLED
+
+# Binary data goes to the newer storage layout from the start, and the
+# settings file is kept private to the user n8n runs as.
+printf "%s" "true" > /var/run/s6/container_environment/N8N_MIGRATE_FS_STORAGE_PATH
+printf "%s" "true" > /var/run/s6/container_environment/N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS
+
+# Limits whose defaults n8n has announced it will tighten. Set to what they
+# are now, so a workflow that works today keeps working after an update, and
+# so that n8n stops warning about them on every start.
+printf "%s" "300" > /var/run/s6/container_environment/N8N_RUNNERS_TASK_TIMEOUT
+printf "%s" "2147483648" \
+    > /var/run/s6/container_environment/N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES
+printf "%s" "5000" > /var/run/s6/container_environment/N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES
+
+# n8n has fewer levels of its own, so trace folds into debug, notice into
+# info, and fatal into error.
+log_level="info"
+case "$(bashio::string.lower "$(bashio::config 'log_level' 'info')")" in
+    trace|debug)    log_level="debug" ;;
+    info|notice)    log_level="info" ;;
+    warning)        log_level="warn" ;;
+    error|fatal)    log_level="error" ;;
+esac
+printf "%s" "${log_level}" > /var/run/s6/container_environment/N8N_LOG_LEVEL
+
+# Schedule triggers fire in the time zone Home Assistant is set to.
+printf "%s" "$(bashio::info.timezone)" \
+    > /var/run/s6/container_environment/GENERIC_TIMEZONE
+printf "%s" "$(bashio::info.timezone)" \
+    > /var/run/s6/container_environment/TZ
+
+if bashio::config.exists 'max_old_space_size'; then
+    max_old_space_size=$(bashio::config 'max_old_space_size')
+    bashio::log.info "Setting max_old_space_size to ${max_old_space_size}"
+    printf "%s" "--max-old-space-size=${max_old_space_size}" \
+        > /var/run/s6/container_environment/NODE_OPTIONS
+fi

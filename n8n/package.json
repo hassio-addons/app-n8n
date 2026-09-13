@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "name": "app-n8n",
+  "description": "Workflow automation for technical people",
+  "homepage": "https://frenck.dev/home-assistant-apps",
+  "repository": "https://github.com/hassio-addons/app-n8n",
+  "license": "MIT",
+  "dependencies": {
+    "n8n": "2.38.7"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}

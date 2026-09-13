@@ -1,0 +1,14 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Home Assistant Community App: n8n
+# Runs the NGINX daemon
+# ==============================================================================
+
+# Wait for n8n to become available. It compiles the editor for the Ingress
+# path and runs its database migrations before it begins listening, which
+# takes a while on the first start after an update.
+bashio::net.wait_for 45678 127.0.0.1 900
+
+bashio::log.info "Starting NGINX..."
+exec nginx
