@@ -5,7 +5,6 @@ slug: n8n
 description: Workflow automation for technical people, with Home Assistant and MQTT wired in
 url: https://github.com/hassio-addons/app-n8n
 ingress: true
-ingress_port: 8099
 ingress_stream: true
 panel_icon: mdi:graph-outline
 init: false
