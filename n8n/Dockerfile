@@ -34,7 +34,7 @@ RUN \
         nodejs=24.18.1-r0 \
         npm=11.12.1-r0 \
         openssh-client-default=10.3_p1-r1 \
-        tzdata=2026c-r0 \
+        tzdata=2026d-r0 \
     \
     && npm install \
         --no-audit \
