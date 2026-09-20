@@ -6,7 +6,7 @@
   "repository": "https://github.com/hassio-addons/app-n8n",
   "license": "MIT",
   "dependencies": {
-    "n8n": "2.38.7"
+    "n8n": "2.39.8"
   },
   "engines": {
     "node": ">=24.0.0"
