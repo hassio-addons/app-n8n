@@ -25,7 +25,7 @@ RUN \
     apk add --no-cache --virtual .build-dependencies \
         build-base=0.5-r4 \
         linux-headers=7.0.0-r1 \
-        python3=3.14.7-r1 \
+        python3=3.14.8-r0 \
     \
     && apk add --no-cache \
         git=2.54.0-r0 \
