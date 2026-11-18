@@ -30,7 +30,7 @@ RUN \
     && apk add --no-cache \
         git=2.54.1-r0 \
         graphicsmagick=1.3.47-r0 \
-        nginx=1.30.6-r0 \
+        nginx=1.30.7-r0 \
         nodejs=24.22.3-r0 \
         npm=11.12.1-r0 \
         openssh-client-default=10.3_p1-r2 \
